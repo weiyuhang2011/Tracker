@@ -31,6 +31,13 @@ export async function fetchItems(params?: { kind?: string; repo?: string }): Pro
   return data.items ?? []
 }
 
+export async function syncNow(): Promise<{ fetched: number; upserted: number }> {
+  const url = new URL('/api/sync', API_BASE)
+  const res = await fetch(url, { method: 'POST' })
+  if (!res.ok) throw new Error(`sync failed: ${res.status}`)
+  return (await res.json()) as { fetched: number; upserted: number }
+}
+
 export async function patchItem(
   kind: Item['kind'],
   repoFullName: string,
