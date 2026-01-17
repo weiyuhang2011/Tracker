@@ -1,12 +1,9 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  font-family: "Nunito Sans", "Segoe UI", "Helvetica Neue", sans-serif;
+  line-height: 1.6;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: CanvasText;
-  background-color: Canvas;
-
+  color: #0f172a;
+  background-color: #f5f7fb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -14,12 +11,11 @@
 }
 
 a {
-  font-weight: 500;
-  color: LinkText;
-  text-decoration: inherit;
+  color: inherit;
+  text-decoration: none;
 }
+
 a:hover {
-  color: LinkText;
   text-decoration: underline;
 }
 
@@ -27,34 +23,17 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: Canvas;
-  color: CanvasText;
+  background: #f5f7fb;
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   line-height: 1.2;
   margin: 0;
 }
 
 button {
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
   font-family: inherit;
-  background-color: ButtonFace;
-  color: ButtonText;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: color-mix(in srgb, CanvasText 32%, transparent);
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
 }
 
 * {

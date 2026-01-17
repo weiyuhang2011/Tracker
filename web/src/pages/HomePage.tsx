@@ -1,129 +1,219 @@
-import { Link } from 'react-router-dom'
-import type { Item } from '../api'
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
+import type { Item } from "../api";
 
-type RepoStats = {
-  repoFullName: string
-  issuesTotal: number
-  issuesOpen: number
-  prsTotal: number
-  prsOpen: number
-  overdueCount: number
-}
+type RepoSummary = {
+  repoFullName: string;
+  total: number;
+  open: number;
+  openIssues: number;
+  openPrs: number;
+  overdueOpen: number;
+  openPct: number;
+  overduePct: number;
+};
 
 function isOpenState(state: string) {
-  return state.toLowerCase() === 'open'
+  return state.toLowerCase() === "open";
 }
 
-function pct(open: number, total: number) {
-  if (total <= 0) return 0
-  return Math.round((open / total) * 100)
+function pct(num: number, den: number) {
+  if (den <= 0) return 0;
+  return Math.round((num / den) * 100);
+}
+
+function isOverdue(it: Item) {
+  if (!isOpenState(it.state)) return false;
+  const created = new Date(it.createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  const diffDays = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
+  return diffDays > 14;
+}
+
+const homePriorityOrder = [
+  "yuanrong",
+  "yuanrong-functionsystem",
+  "yuanrong-datasystem",
+];
+
+function repoSortKey(name: string) {
+  const normalized = name.toLowerCase();
+  // exact match first
+  const exactIdx = homePriorityOrder.findIndex(
+    (r) => r.toLowerCase() === normalized,
+  );
+  if (exactIdx !== -1) return exactIdx;
+  // allow repoFullName with owner prefix, e.g. org/yuanrong
+  const suffixIdx = homePriorityOrder.findIndex((r) =>
+    normalized.endsWith(`/${r.toLowerCase()}`),
+  );
+  if (suffixIdx !== -1) return suffixIdx;
+  return Number.POSITIVE_INFINITY;
+}
+
+function DualDonut(props: { openPct: number; overduePct: number }) {
+  const openPct = Math.min(Math.max(props.openPct, 0), 100);
+  const overduePct = Math.min(Math.max(props.overduePct, 0), 100);
+  return (
+    <div className="dualDonut">
+      <div
+        className="donutOuter"
+        style={{
+          background: `conic-gradient(#2563eb ${openPct}%, #e5e7eb 0)`,
+        }}
+        aria-label={`Open ratio ${openPct}%`}
+      >
+        <div
+          className="donutInner"
+          style={{
+            background: `conic-gradient(#ef4444 ${overduePct}%, #e5e7eb 0)`,
+          }}
+          aria-label={`Overdue ratio ${overduePct}% of open`}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function HomePage(props: {
-  items: Item[]
-  loading: boolean
-  onRefresh: () => void
-  onSync: () => void
-  error: string | null
+  items: Item[];
+  loading: boolean;
+  onRefresh: () => void;
+  onSync: () => void;
+  error: string | null;
+  onItemUpdated: (it: Item) => void;
 }) {
-  const repoMap = new Map<string, RepoStats>()
-
-  for (const it of props.items) {
-    const cur = repoMap.get(it.repoFullName) ?? {
-      repoFullName: it.repoFullName,
-      issuesTotal: 0,
-      issuesOpen: 0,
-      prsTotal: 0,
-      prsOpen: 0,
-      overdueCount: 0,
+  const summaries = useMemo(() => {
+    const map = new Map<string, RepoSummary>();
+    for (const it of props.items) {
+      const cur =
+        map.get(it.repoFullName) ??
+        {
+          repoFullName: it.repoFullName,
+          total: 0,
+          open: 0,
+          openIssues: 0,
+          openPrs: 0,
+          overdueOpen: 0,
+          openPct: 0,
+          overduePct: 0,
+        };
+      cur.total += 1;
+      if (isOpenState(it.state)) {
+        cur.open += 1;
+        if (it.kind === "issue") cur.openIssues += 1;
+        else cur.openPrs += 1;
+        if (isOverdue(it)) cur.overdueOpen += 1;
+      }
+      map.set(it.repoFullName, cur);
     }
-
-    if (it.kind === 'issue') {
-      cur.issuesTotal += 1
-      if (isOpenState(it.state)) cur.issuesOpen += 1
-    } else {
-      cur.prsTotal += 1
-      if (isOpenState(it.state)) cur.prsOpen += 1
-    }
-
-    if (it.overdueDays > 0) cur.overdueCount += 1
-
-    repoMap.set(it.repoFullName, cur)
-  }
-
-  const repos = Array.from(repoMap.values()).sort((a, b) => a.repoFullName.localeCompare(b.repoFullName))
+    const list = Array.from(map.values()).map((r) => ({
+      ...r,
+      openPct: pct(r.open, r.total),
+      overduePct: pct(r.overdueOpen, r.open),
+    }));
+    return list.sort((a, b) => {
+      const pa = repoSortKey(a.repoFullName);
+      const pb = repoSortKey(b.repoFullName);
+      if (pa !== pb) return pa - pb;
+      return a.repoFullName.localeCompare(b.repoFullName);
+    });
+  }, [props.items]);
 
   return (
-    <>
-      <div className="container">
-        <div className="topbarInner" style={{ padding: '8px 0 0' }}>
-          <div className="titleRow">
-            <h1>openYuanRong 看板</h1>
-            <span className="subtitle">首页：各仓库统计</span>
-          </div>
-          <div className="actions">
-            <button onClick={props.onRefresh} disabled={props.loading}>
-              {props.loading ? '刷新中…' : '刷新'}
-            </button>
-            <button onClick={props.onSync} disabled={props.loading}>
-              同步
-            </button>
+    <div className="container">
+      <header className="boardHeader">
+        <div>
+          <div className="eyebrow">Overview</div>
+          <div className="boardTitle">
+            <h1>Repository Health</h1>
+            <span className="subtitle">
+              Open vs total, plus overdue signals by repo
+            </span>
           </div>
         </div>
+        <div className="headerActions">
+          <button
+            className="ghostButton"
+            onClick={props.onRefresh}
+            disabled={props.loading}
+          >
+            {props.loading ? "刷新中…" : "刷新"}
+          </button>
+          <button
+            className="primaryButton"
+            onClick={props.onSync}
+            disabled={props.loading}
+          >
+            {props.loading ? "同步中…" : "同步"}
+          </button>
+        </div>
+      </header>
 
-        {props.error ? <div className="error">{props.error}</div> : null}
+      {props.error ? <div className="errorBanner">{props.error}</div> : null}
 
-        {repos.length === 0 ? (
-          <div className="card" style={{ marginTop: 12 }}>
-            <div style={{ fontWeight: 650, marginBottom: 6 }}>还没有数据</div>
-            <div className="muted">先配置后端的 GITCODE_TOKEN，然后点击右上角“同步”。</div>
-          </div>
-        ) : null}
+      {summaries.length === 0 ? (
+        <div className="summaryEmpty">
+          <div className="eyebrow muted">暂无数据</div>
+          <div className="muted">先同步数据后查看概览。</div>
+        </div>
+      ) : null}
 
-        <div className="grid" style={{ marginTop: 12 }}>
-          {repos.map((s) => {
-            const issuesPct = pct(s.issuesOpen, s.issuesTotal)
-            const prsPct = pct(s.prsOpen, s.prsTotal)
-
-            return (
-              <div key={s.repoFullName} className="card">
-                <div className="cardHeader">
-                  <Link to={`/repo/${encodeURIComponent(s.repoFullName)}`}>{s.repoFullName}</Link>
-                  <span className="pill">超期 {s.overdueCount}</span>
+      <div className="summaryGrid">
+        {summaries.map((s) => (
+          <div key={s.repoFullName} className="summaryCard">
+            <div className="summaryHeader">
+              <div>
+                <Link
+                  className="repoTitle"
+                  to={`/repo/${encodeURIComponent(s.repoFullName)}`}
+                >
+                  {s.repoFullName}
+                </Link>
+                <div className="muted small">
+                  未闭环 {s.open} / 总计 {s.total}
                 </div>
+              </div>
+              <span className="pill pillMuted">Open {s.openPct}%</span>
+            </div>
 
-                <div className="statRow">
+            <div className="summaryBody">
+              <DualDonut openPct={s.openPct} overduePct={s.overduePct} />
+              <div className="summaryLegend">
+                <div>
+                  <div className="legendDot legendOpen" />
                   <div>
-                    <div style={{ fontWeight: 650 }}>Issue 未解决</div>
-                    <div className="muted">
-                      {s.issuesOpen} / {s.issuesTotal}（{issuesPct}%）
-                    </div>
-                  </div>
-                  <div style={{ width: 140 }}>
-                    <div className="progress">
-                      <div className="progressFill" style={{ width: `${issuesPct}%` }} />
-                    </div>
+                    <div className="legendLabel">未闭环占比</div>
+                    <div className="legendValue">{s.openPct}%</div>
                   </div>
                 </div>
-
-                <div className="statRow">
+                <div>
+                  <div className="legendDot legendOverdue" />
                   <div>
-                    <div style={{ fontWeight: 650 }}>PR 未解决</div>
-                    <div className="muted">
-                      {s.prsOpen} / {s.prsTotal}（{prsPct}%）
-                    </div>
-                  </div>
-                  <div style={{ width: 140 }}>
-                    <div className="progress">
-                      <div className="progressFill" style={{ width: `${prsPct}%` }} />
-                    </div>
+                    <div className="legendLabel">超期占未闭环</div>
+                    <div className="legendValue">{s.overduePct}%</div>
                   </div>
                 </div>
               </div>
-            )
-          })}
-        </div>
+            </div>
+
+            <div className="summaryFooter">
+              <div>
+                <div className="muted small">Issue 未闭环</div>
+                <div className="statValue">{s.openIssues}</div>
+              </div>
+              <div>
+                <div className="muted small">PR 未闭环</div>
+                <div className="statValue">{s.openPrs}</div>
+              </div>
+              <div>
+                <div className="muted small">超期（未闭环）</div>
+                <div className="statValue dangerText">{s.overdueOpen}</div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-    </>
-  )
+    </div>
+  );
 }

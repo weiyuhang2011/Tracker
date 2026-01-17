@@ -1,72 +1,88 @@
-import { useEffect, useState } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import './App.css'
-import { fetchItems, syncNow, type Item } from './api'
-import { HomePage } from './pages/HomePage'
-import { RepoPage } from './pages/RepoPage'
+import { useEffect, useState } from "react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import "./App.css";
+import { fetchItems, syncNow, type Item } from "./api";
+import { HomePage } from "./pages/HomePage";
+import { RepoPage } from "./pages/RepoPage";
 
 function App() {
-  const [items, setItems] = useState<Item[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [items, setItems] = useState<Item[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const data = await fetchItems()
-      setItems(data)
+      const data = await fetchItems();
+      setItems(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   async function doSync() {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      await syncNow()
-      await refresh()
+      await syncNow();
+      await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   function onItemUpdated(updated: Item) {
-    const key = `${updated.kind}:${updated.repoFullName}:${updated.key}`
-    setItems((prev) => prev.map((x) => (`${x.kind}:${x.repoFullName}:${x.key}` === key ? updated : x)))
+    const key = `${updated.kind}:${updated.repoFullName}:${updated.key}`;
+    setItems((prev) =>
+      prev.map((x) =>
+        `${x.kind}:${x.repoFullName}:${x.key}` === key ? updated : x,
+      ),
+    );
   }
 
   useEffect(() => {
-    void refresh()
-  }, [])
+    void refresh();
+  }, []);
 
   return (
     <BrowserRouter>
       <div className="app">
-        <div className="topbar">
-          <div className="container" style={{ paddingTop: 10, paddingBottom: 10 }}>
-            <div className="topbarInner">
-              <div className="muted">Go 后端 + GitCode 同步 + 自定义字段</div>
-              <div className="muted">当前条目：{items.length}</div>
-            </div>
-          </div>
-        </div>
-
         <Routes>
           <Route
             path="/"
-            element={<HomePage items={items} loading={loading} error={error} onRefresh={refresh} onSync={doSync} />}
+            element={
+              <HomePage
+                items={items}
+                loading={loading}
+                error={error}
+                onItemUpdated={onItemUpdated}
+                onRefresh={refresh}
+                onSync={doSync}
+              />
+            }
           />
-          <Route path="/repo/:repoFullName" element={<RepoPage items={items} onItemUpdated={onItemUpdated} />} />
+          <Route
+            path="/repo/:repoFullName"
+            element={
+              <RepoPage
+                items={items}
+                loading={loading}
+                error={error}
+                onItemUpdated={onItemUpdated}
+                onRefresh={refresh}
+                onSync={doSync}
+              />
+            }
+          />
         </Routes>
       </div>
     </BrowserRouter>
-  )
+  );
 }
 
-export default App
+export default App;

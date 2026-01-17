@@ -37,7 +37,7 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		kind := chi.URLParam(req, "kind") // issue|pr
 		owner := chi.URLParam(req, "owner")
 		repo := chi.URLParam(req, "repo")
-		key := chi.URLParam(req, "key")   // external key (e.g. number)
+		key := chi.URLParam(req, "key") // external key (e.g. number)
 		repoFullName := owner + "/" + repo
 
 		var patch store.CustomPatch
@@ -62,7 +62,7 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 	r.Post("/api/sync", func(w http.ResponseWriter, req *http.Request) {
 		baseURL := envOrDefault("GITCODE_BASE_URL", "https://api.gitcode.com")
 		owner := envOrDefault("GITCODE_OWNER", "openeuler")
-		reposCSV := envOrDefault("GITCODE_REPOS", "yuanrong,yuanrong-functionsystem,yuanrong-datasystem,ray-adapter,yuanrong-frontend")
+		reposCSV := envOrDefault("GITCODE_REPOS", "yuanrong,yuanrong-functionsystem,yuanrong-datasystem,ray-adapter,yuanrong-frontend,yuanrong-serve,spring-adapter")
 		token := os.Getenv("GITCODE_TOKEN")
 
 		repos := []string{}
