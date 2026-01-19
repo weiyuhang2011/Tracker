@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,19 +21,24 @@ import (
 )
 
 func main() {
+	logger := newLogger(envOrDefault("LOG_FORMAT", "text"), envOrDefault("LOG_LEVEL", "info"))
+	slog.SetDefault(logger)
+
 	addr := envOrDefault("ADDR", ":8080")
 	dbPath := envOrDefault("DB_PATH", "./tracker.db")
 	allowedOrigin := envOrDefault("CORS_ORIGIN", "http://localhost:5173")
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		logger.Error("open db failed", "err", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	st := store.New(db)
 	if err := st.Migrate(context.Background()); err != nil {
-		log.Fatalf("migrate: %v", err)
+		logger.Error("db migrate failed", "err", err)
+		os.Exit(1)
 	}
 
 	r := chi.NewRouter()
@@ -54,9 +60,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("server listening on %s", addr)
+		logger.Info("server listening", "addr", addr, "allowedOrigin", allowedOrigin)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			logger.Error("server listen failed", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -67,7 +74,27 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-	log.Printf("server stopped")
+	logger.Info("server stopped")
+}
+
+func newLogger(format, level string) *slog.Logger {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn", "warning":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: lvl, AddSource: true}
+	if strings.EqualFold(format, "json") {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
 
 func envOrDefault(key, def string) string {

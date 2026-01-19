@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +15,10 @@ import (
 )
 
 func RegisterRoutes(r chi.Router, st *store.Store) {
+	logger := slog.Default().With("component", "api")
+
 	r.Get("/api/health", func(w http.ResponseWriter, _ *http.Request) {
+		logger.Debug("health check")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":   true,
 			"time": time.Now().UTC().Format(time.RFC3339),
@@ -25,11 +29,16 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		kind := req.URL.Query().Get("kind") // issue|pr|""
 		repo := req.URL.Query().Get("repo") // "owner/name" or ""
 
+		start := time.Now()
+		logger.Info("list items", "kind", kind, "repo", repo)
+
 		items, err := st.ListItems(req.Context(), store.ListFilter{Kind: kind, RepoFullName: repo})
 		if err != nil {
+			logger.Error("list items failed", "kind", kind, "repo", repo, "err", err)
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		logger.Info("list items ok", "count", len(items), "elapsed_ms", time.Since(start).Milliseconds())
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	})
 
@@ -40,8 +49,12 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		key := chi.URLParam(req, "key") // external key (e.g. number)
 		repoFullName := owner + "/" + repo
 
+		start := time.Now()
+		logger.Info("patch item", "kind", kind, "repo", repoFullName, "key", key)
+
 		var patch store.CustomPatch
 		if err := json.NewDecoder(req.Body).Decode(&patch); err != nil {
+			logger.Warn("patch item invalid json", "kind", kind, "repo", repoFullName, "key", key, "err", err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 			return
 		}
@@ -49,12 +62,15 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		updated, err := st.PatchCustom(req.Context(), kind, repoFullName, key, patch)
 		if err != nil {
 			if store.IsNotFound(err) {
+				logger.Warn("patch item not found", "kind", kind, "repo", repoFullName, "key", key)
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 				return
 			}
+			logger.Error("patch item failed", "kind", kind, "repo", repoFullName, "key", key, "err", err)
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		logger.Info("patch item ok", "kind", kind, "repo", repoFullName, "key", key, "elapsed_ms", time.Since(start).Milliseconds())
 
 		writeJSON(w, http.StatusOK, updated)
 	})
@@ -65,6 +81,9 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		reposCSV := envOrDefault("GITCODE_REPOS", "yuanrong,yuanrong-functionsystem,yuanrong-datasystem,ray-adapter,yuanrong-frontend,yuanrong-serve,spring-adapter")
 		token := os.Getenv("GITCODE_TOKEN")
 
+		start := time.Now()
+		logger.Info("sync start", "owner", owner, "baseURL", baseURL)
+
 		repos := []string{}
 		for _, r := range strings.Split(reposCSV, ",") {
 			r = strings.TrimSpace(r)
@@ -74,6 +93,7 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		}
 
 		if token == "" {
+			logger.Warn("sync missing token")
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing GITCODE_TOKEN"})
 			return
 		}
@@ -83,13 +103,16 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 		totalFetched := 0
 		totalUpserted := 0
 		for _, repo := range repos {
+			logger.Info("sync repo", "repo", owner+"/"+repo)
 			issues, err := client.ListIssues(req.Context(), owner, repo)
 			if err != nil {
+				logger.Error("sync list issues failed", "repo", owner+"/"+repo, "err", err)
 				writeError(w, http.StatusBadGateway, err)
 				return
 			}
 			prs, err := client.ListPulls(req.Context(), owner, repo)
 			if err != nil {
+				logger.Error("sync list pulls failed", "repo", owner+"/"+repo, "err", err)
 				writeError(w, http.StatusBadGateway, err)
 				return
 			}
@@ -126,11 +149,14 @@ func RegisterRoutes(r chi.Router, st *store.Store) {
 			totalFetched += len(core)
 			up, err := st.UpsertCore(req.Context(), core)
 			if err != nil {
+				logger.Error("sync upsert failed", "repo", owner+"/"+repo, "err", err)
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
 			totalUpserted += up
+			logger.Info("sync repo ok", "repo", owner+"/"+repo, "issues", len(issues), "prs", len(prs), "upserted", up)
 		}
+		logger.Info("sync done", "fetched", totalFetched, "upserted", totalUpserted, "elapsed_ms", time.Since(start).Milliseconds())
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"fetched":  totalFetched,

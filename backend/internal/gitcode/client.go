@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -40,18 +41,25 @@ type RemoteItem struct {
 }
 
 func (c *Client) ListIssues(ctx context.Context, owner, repo string) ([]RemoteItem, error) {
+	logger := slog.Default().With("component", "gitcode", "op", "list-issues", "repo", owner+"/"+repo)
+	logger.Debug("list issues start")
 	return c.listPaged(ctx, fmt.Sprintf("/api/v5/repos/%s/%s/issues", url.PathEscape(owner), url.PathEscape(repo)))
 }
 
 func (c *Client) ListPulls(ctx context.Context, owner, repo string) ([]RemoteItem, error) {
+	logger := slog.Default().With("component", "gitcode", "op", "list-pulls", "repo", owner+"/"+repo)
+	logger.Debug("list pulls start")
 	return c.listPaged(ctx, fmt.Sprintf("/api/v5/repos/%s/%s/pulls", url.PathEscape(owner), url.PathEscape(repo)))
 }
 
 func (c *Client) listPaged(ctx context.Context, path string) ([]RemoteItem, error) {
+	logger := slog.Default().With("component", "gitcode", "op", "list-paged", "path", path)
+	start := time.Now()
 	out := []RemoteItem{}
 	for page := 1; page <= 50; page++ { // safety cap
 		u, err := url.Parse(c.baseURL + path)
 		if err != nil {
+			logger.Error("parse url failed", "err", err)
 			return nil, err
 		}
 		q := u.Query()
@@ -62,19 +70,26 @@ func (c *Client) listPaged(ctx context.Context, path string) ([]RemoteItem, erro
 
 		items, err := c.getList(ctx, u.String())
 		if err != nil {
+			logger.Error("request failed", "page", page, "url", u.String(), "err", err)
 			return nil, err
 		}
 		if len(items) == 0 {
+			logger.Debug("page empty", "page", page)
 			break
 		}
 		out = append(out, items...)
+		logger.Debug("page ok", "page", page, "count", len(items))
 	}
+	logger.Info("list paged ok", "total", len(out), "elapsed_ms", time.Since(start).Milliseconds())
 	return out, nil
 }
 
 func (c *Client) getList(ctx context.Context, fullURL string) ([]RemoteItem, error) {
+	logger := slog.Default().With("component", "gitcode", "op", "get-list")
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
+		logger.Error("build request failed", "err", err)
 		return nil, err
 	}
 
@@ -86,17 +101,20 @@ func (c *Client) getList(ctx context.Context, fullURL string) ([]RemoteItem, err
 
 	res, err := c.http.Do(req)
 	if err != nil {
+		logger.Error("http request failed", "url", fullURL, "err", err)
 		return nil, err
 	}
 	defer res.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		logger.Error("non-2xx response", "url", fullURL, "status", res.StatusCode, "body", strings.TrimSpace(string(body)))
 		return nil, fmt.Errorf("gitcode %s: status=%d body=%s", fullURL, res.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var raw []map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
+		logger.Error("decode list failed", "url", fullURL, "err", err)
 		return nil, fmt.Errorf("decode list: %w", err)
 	}
 
@@ -135,6 +153,7 @@ func (c *Client) getList(ctx context.Context, fullURL string) ([]RemoteItem, err
 			UpdatedAt: updatedAt,
 		})
 	}
+	logger.Debug("get list ok", "url", fullURL, "count", len(items), "elapsed_ms", time.Since(start).Milliseconds())
 	return items, nil
 }
 

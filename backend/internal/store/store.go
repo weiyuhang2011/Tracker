@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -18,6 +19,8 @@ func New(db *sql.DB) *Store {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
+	logger := slog.Default().With("component", "store", "op", "migrate")
+	start := time.Now()
 	stmts := []string{
 		`PRAGMA journal_mode=WAL;`,
 		`CREATE TABLE IF NOT EXISTS items (
@@ -49,9 +52,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			logger.Error("migrate exec failed", "err", err)
 			return fmt.Errorf("migrate exec: %w", err)
 		}
 	}
+	logger.Info("migrate ok", "elapsed_ms", time.Since(start).Milliseconds())
 	return nil
 }
 
@@ -81,6 +86,8 @@ type ListFilter struct {
 }
 
 func (s *Store) ListItems(ctx context.Context, f ListFilter) ([]Item, error) {
+	logger := slog.Default().With("component", "store", "op", "list")
+	start := time.Now()
 	where := []string{"1=1"}
 	args := []any{}
 
@@ -101,6 +108,7 @@ func (s *Store) ListItems(ctx context.Context, f ListFilter) ([]Item, error) {
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
+		logger.Error("list query failed", "kind", f.Kind, "repo", f.RepoFullName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -113,13 +121,19 @@ func (s *Store) ListItems(ctx context.Context, f ListFilter) ([]Item, error) {
 			&it.Kind, &it.RepoFullName, &it.ExternalKey, &it.Title, &it.State, &it.URL, &it.Author, &it.CreatedAt, &it.UpdatedAt,
 			&it.Assignee, &it.AssigneeGroup, &it.Note, &it.EstimatedAt, &syncInt, &it.Priority, &it.DueAt,
 		); err != nil {
+			logger.Error("list scan failed", "err", err)
 			return nil, err
 		}
 		it.SyncInternal = syncInt != 0
 		it.OverdueDays = computeOverdueDays(it.DueAt)
 		items = append(items, it)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		logger.Error("list rows error", "err", err)
+		return nil, err
+	}
+	logger.Info("list ok", "kind", f.Kind, "repo", f.RepoFullName, "count", len(items), "elapsed_ms", time.Since(start).Milliseconds())
+	return items, nil
 }
 
 type CustomPatch struct {
@@ -137,6 +151,8 @@ var errNotFound = errors.New("not found")
 func IsNotFound(err error) bool { return errors.Is(err, errNotFound) }
 
 func (s *Store) PatchCustom(ctx context.Context, kind, repoFullName, externalKey string, p CustomPatch) (Item, error) {
+	logger := slog.Default().With("component", "store", "op", "patch")
+	start := time.Now()
 	// Read existing first
 	q := `SELECT kind, repo_full_name, external_key, title, state, url, author, created_at, updated_at,
 		assignee, assignee_group, note, estimated_resolve_at, sync_internal, priority, due_at
@@ -150,8 +166,10 @@ func (s *Store) PatchCustom(ctx context.Context, kind, repoFullName, externalKey
 		&it.Assignee, &it.AssigneeGroup, &it.Note, &it.EstimatedAt, &syncInt, &it.Priority, &it.DueAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			logger.Warn("patch not found", "kind", kind, "repo", repoFullName, "key", externalKey)
 			return Item{}, errNotFound
 		}
+		logger.Error("patch read failed", "kind", kind, "repo", repoFullName, "key", externalKey, "err", err)
 		return Item{}, err
 	}
 	it.SyncInternal = syncInt != 0
@@ -184,10 +202,12 @@ func (s *Store) PatchCustom(ctx context.Context, kind, repoFullName, externalKey
 		it.Assignee, it.AssigneeGroup, it.Note, it.EstimatedAt, boolToInt(it.SyncInternal), it.Priority, it.DueAt,
 		it.Kind, it.RepoFullName, it.ExternalKey,
 	); err != nil {
+		logger.Error("patch update failed", "kind", kind, "repo", repoFullName, "key", externalKey, "err", err)
 		return Item{}, err
 	}
 
 	it.OverdueDays = computeOverdueDays(it.DueAt)
+	logger.Info("patch ok", "kind", kind, "repo", repoFullName, "key", externalKey, "elapsed_ms", time.Since(start).Milliseconds())
 	return it, nil
 }
 
@@ -204,7 +224,10 @@ type CoreItem struct {
 }
 
 func (s *Store) UpsertCore(ctx context.Context, items []CoreItem) (int, error) {
+	logger := slog.Default().With("component", "store", "op", "upsert")
+	start := time.Now()
 	if len(items) == 0 {
+		logger.Debug("upsert skipped", "reason", "no items")
 		return 0, nil
 	}
 
@@ -220,12 +243,14 @@ func (s *Store) UpsertCore(ctx context.Context, items []CoreItem) (int, error) {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		logger.Error("upsert begin failed", "err", err)
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
+		logger.Error("upsert prepare failed", "err", err)
 		return 0, err
 	}
 	defer stmt.Close()
@@ -238,14 +263,17 @@ func (s *Store) UpsertCore(ctx context.Context, items []CoreItem) (int, error) {
 		if _, err := stmt.ExecContext(ctx,
 			it.Kind, it.RepoFullName, it.ExternalKey, it.Title, it.State, it.URL, it.Author, it.CreatedAt, it.UpdatedAt,
 		); err != nil {
+			logger.Error("upsert exec failed", "kind", it.Kind, "repo", it.RepoFullName, "key", it.ExternalKey, "err", err)
 			return 0, err
 		}
 		count++
 	}
 
 	if err := tx.Commit(); err != nil {
+		logger.Error("upsert commit failed", "err", err)
 		return 0, err
 	}
+	logger.Info("upsert ok", "count", count, "elapsed_ms", time.Since(start).Milliseconds())
 	return count, nil
 }
 
